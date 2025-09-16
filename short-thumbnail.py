@@ -122,7 +122,7 @@ def ai_analysis_tab():
                     st.session_state['analysis_results'] = perform_ai_analysis(image)
                     st.session_state['last_uploaded_name'] = uploaded_file.name
             
-            st.image(image, caption="Uploaded Thumbnail", use_column_width=True)
+            st.image(image, caption="Uploaded Thumbnail", use_container_width=True)
             c1, c2, c3 = st.columns(3)
             c1.metric("Resolution", f"{image.width}x{image.height}")
             c2.metric("File Size", f"{len(uploaded_file.getvalue()) / 1024:.1f} KB")
