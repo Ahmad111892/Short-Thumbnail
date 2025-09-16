@@ -150,7 +150,7 @@ def perform_ai_analysis(image):
     color_analysis = analyze_colors(img_array)
     face_analysis = detect_faces(img_array)
     text_analysis = detect_text_regions(img_array)
-    composition_analysis = analyze_composition(img_array)
+    composition_analysis = calculate_composition(img_array)
     visual_appeal = calculate_visual_appeal(img_array)
     
     click_potential = predict_click_potential(
