@@ -10,3 +10,4 @@ scikit-learn
 seaborn
 streamlit
 youtube-transcript-api
+easyocr
