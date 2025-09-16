@@ -19,7 +19,7 @@ def load_easyocr_model():
     reader = easyocr.Reader(['en']) # 'en' for English language
     return reader
 
-@st.cache_data
+@st.cache_resource
 def load_haar_cascade():
     """Loads the Haar Cascade file and is cached."""
     # Check if the file exists before loading
