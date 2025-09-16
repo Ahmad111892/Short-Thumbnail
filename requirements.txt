@@ -1,0 +1,12 @@
+streamlit
+Pillow
+numpy
+opencv-python-headless
+matplotlib
+seaborn
+scikit-learn
+requests
+google-generativeai
+openai
+youtube-transcript-api
+pytube
