@@ -1,6 +1,6 @@
 streamlit
 numpy
-opencv-contrib-python-headless
+opencv-python-headless
 Pillow
 scikit-learn
 matplotlib
@@ -11,9 +11,3 @@ deepface
 transformers
 pyiqa
 ultralytics
-easyocr
-google-generativeai
-openai
-youtube-transcript-api
-pytube
-requests
