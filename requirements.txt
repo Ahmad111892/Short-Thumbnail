@@ -16,7 +16,6 @@ PyWavelets
 matplotlib
 seaborn
 plotly
-rembg
 colormath
 imagehash
 pytube
