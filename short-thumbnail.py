@@ -169,7 +169,7 @@ def ai_analysis_tab():
                 progress_bar.empty()
 
             if st.session_state.get('analysis_results'):
-                st.image(image, caption="Analyzed Thumbnail", use_container_width=True)
+                st.image(image, caption="Analyzed Thumbnail", width='stretch')
 
     with col2:
         if st.session_state.get('analysis_results'):
