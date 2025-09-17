@@ -1,8 +1,9 @@
 streamlit
 numpy
 opencv-contrib-python-headless
-Pillow
+Pillow-SIMD
 scikit-learn
+scikit-image
 torch
 torchvision
 ultralytics
@@ -10,5 +11,14 @@ transformers
 sentencepiece
 easyocr
 deepface
+dlib
+PyWavelets
 matplotlib
 seaborn
+plotly
+rembg
+colormath
+imagehash
+pytube
+sentence-transformers
+requests
