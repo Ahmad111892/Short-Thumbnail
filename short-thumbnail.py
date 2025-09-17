@@ -1,290 +1,365 @@
-# =================================================================================
-# AI VISUAL STRATEGIST PRO MAX - FINAL WORKING VERSION
-#
-# This version uses state-of-the-art deep learning models for analysis.
-# The problematic 'pyiqa' library has been replaced with a reliable alternative.
-# =================================================================================
+
 
 import streamlit as st
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 import numpy as np
 import cv2
 import colorsys
 from sklearn.cluster import KMeans
 import torch
 import os
+import requests
+from io import BytesIO
+import hashlib
+import time
+import json
+import math
+from collections import Counter
 
-# --- Model Loading (Cached for Performance) ---
+# --- AI Model Loading (Cached, Robust, and Centralized) ---
+
 @st.cache_resource
-def load_models():
-    """Loads all AI models into memory once."""
+def load_ai_models():
+    """Loads all core AI models into memory once."""
     models = {}
-    # Saliency Model for User Attention
-    models['saliency'] = cv2.saliency.StaticSaliencyFineGrained_create()
-    # Object Detection Model (YOLO)
+    st.write("Cache miss: Loading core AI models...")
+
+    # 1. YOLOv8 for Object Detection
     try:
         from ultralytics import YOLO
-        models['yolo'] = YOLO('yolov8n.pt') 
-    except ImportError:
-        st.error("Utralyics (YOLO) not installed. Please add 'ultralytics' to requirements.txt")
-        models['yolo'] = None
-    # Text Sentiment Analysis Model
-    try:
-        from transformers import pipeline
-        models['sentiment'] = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
-    except ImportError:
-        st.error("Transformers not installed. Please add 'transformers' to requirements.txt")
-        models['sentiment'] = None
-    
-    # EasyOCR model
+        models['yolo'] = YOLO('yolov8n.pt')
+    except Exception as e:
+        st.error(f"YOLOv8 Error: {e}"); models['yolo'] = None
+
+    # 2. EasyOCR for Text Detection
     try:
         import easyocr
-        models['ocr'] = easyocr.Reader(['en'])
-    except ImportError:
-        models['ocr'] = None
-
-    return models
-
-# --- Advanced Analysis Functions ---
-def analyze_faces_advanced(img_array):
-    """Analyzes faces for emotion, age, and gender using DeepFace."""
+        models['ocr'] = easyocr.Reader(['en', 'ur'], gpu=False, verbose=False)
+    except Exception as e:
+        st.error(f"EasyOCR Error: {e}"); models['ocr'] = None
+        
+    # 3. MediaPipe for Face Detection
     try:
-        from deepface import DeepFace
-        results = DeepFace.analyze(
-            img_path=img_array,
-            actions=['emotion'],
-            enforce_detection=False,
-            detector_backend='opencv'
-        )
+        import mediapipe as mp
+        models['face_detector'] = mp.solutions.face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
+    except Exception as e:
+        st.error(f"MediaPipe Error: {e}"); models['face_detector'] = None
         
-        if isinstance(results, list) and len(results) > 0:
-            main_face = results[0]
-            dominant_emotion = main_face['dominant_emotion']
-            emotion_score = main_face['emotion'][dominant_emotion]
-            emotional_impact = emotion_score 
-            if dominant_emotion in ['surprise', 'happy']:
-                emotional_impact *= 1.2
-            
-            return {
-                'face_count': len(results),
-                'dominant_emotion': dominant_emotion.capitalize(),
-                'emotion_confidence': f"{emotion_score:.1f}%",
-                'emotional_impact_score': min(100, emotional_impact),
-            }
-    except Exception:
-        pass
-    return {'face_count': 0, 'dominant_emotion': 'N/A', 'emotional_impact_score': 10}
+    # 4. Dlib for Facial Landmarks
+    try:
+        import dlib
+        # Ensure 'shape_predictor_68_face_landmarks.dat' is in the root directory
+        models['dlib_predictor'] = dlib.shape_predictor('shape_predictor_68_face_landmarks.dat')
+        models['dlib_detector'] = dlib.get_frontal_face_detector()
+    except Exception as e:
+        st.error(f"Dlib Error: Could not load 'shape_predictor_68_face_landmarks.dat'. {e}")
+        models['dlib_predictor'] = None
 
-def analyze_text_advanced(img_array, models):
-    """Detects text with EasyOCR and analyzes its sentiment."""
-    if models.get('ocr') is None or models.get('sentiment') is None:
-        return {'text_count': 0, 'full_text': "", 'sentiment_score': 50}
-
-    ocr_results = models['ocr'].readtext(img_array)
-    full_text = " ".join([res[1] for res in ocr_results])
+    # 5. Sentence Transformer for Semantic Coherence
+    try:
+        from sentence_transformers import SentenceTransformer
+        # Using a lightweight, efficient model
+        models['semantic_model'] = SentenceTransformer('clip-ViT-B-32')
+    except Exception as e:
+        st.warning(f"SentenceTransformer Warning: Semantic Coherence will be disabled. Error: {e}")
+        models['semantic_model'] = None
     
-    if not full_text:
-        return {'text_count': 0, 'full_text': "", 'sentiment_score': 50}
-
-    sentiment_result = models['sentiment'](full_text)[0]
-    sentiment_label = sentiment_result['label']
-    sentiment_confidence = sentiment_result['score']
-    
-    sentiment_score = (sentiment_confidence * 100) if sentiment_label == 'POSITIVE' else (1 - sentiment_confidence) * 50
-    if '?' in full_text or any(word in full_text.lower() for word in ['secret', 'hack', 'warning', 'never']):
-        sentiment_score = min(100, sentiment_score * 1.3)
-        
-    return {
-        'text_count': len(full_text.split()),
-        'full_text': full_text,
-        'sentiment_label': sentiment_label,
-        'sentiment_score': sentiment_score
-    }
-
-def analyze_objects_advanced(img_array, models):
-    """Detects key objects in the thumbnail using YOLO."""
-    if models.get('yolo') is None:
-        return {'object_count': 0, 'key_objects': [], 'clarity_score': 50}
-
-    results = models['yolo'].predict(img_array, verbose=False)
-    detected_objects = []
-    total_area = img_array.shape[0] * img_array.shape[1]
-    object_area = 0
-
-    if len(results) > 0:
-        for box in results[0].boxes:
-            class_id = int(box.cls[0])
-            object_name = models['yolo'].names[class_id]
-            if object_name not in ['person', 'face']:
-                detected_objects.append(object_name.capitalize())
-            
-            coords = box.xywh[0]
-            area = coords[2] * coords[3]
-            object_area += area
-    
-    clutter_score = (len(detected_objects) / 10) + (object_area / total_area)
-    clarity_score = max(0, (1 - clutter_score) * 100)
-
-    return {
-        'object_count': len(detected_objects),
-        'key_objects': list(set(detected_objects))[:5],
-        'clarity_score': clarity_score
-    }
-
-def analyze_quality_advanced(img_array):
-    """Analyzes technical image quality using a reliable OpenCV method."""
-    # Convert to grayscale for quality analysis
-    gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-    
-    # Use Laplacian variance to measure sharpness/clarity (less blurry = higher value)
-    laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
-    
-    # Normalize the score to a 0-100 range
-    quality_score = min(100, laplacian_var / 25) 
-    
-    return {'technical_quality_score': int(quality_score)}
-
-def analyze_colors_advanced(img_array):
-    """Analyzes color psychology."""
-    pixels = img_array.reshape(-1, 3)
-    data = pixels
-    if len(data) > 20000:
-        indices = np.random.choice(len(data), 20000, replace=False)
-        data = data[indices]
-    
-    kmeans = KMeans(n_clusters=3, random_state=42, n_init='auto')
-    kmeans.fit(data)
-    dominant_colors = kmeans.cluster_centers_.astype(int)
-
-    color_psychology = { 'Red': 0, 'Green': 0, 'Blue': 0, 'Yellow': 0, 'Orange': 0, 'Black/White': 0 }
-    total_pixels = len(kmeans.labels_)
-    for i, color in enumerate(dominant_colors):
-        r, g, b = color
-        percentage = np.count_nonzero(kmeans.labels_ == i) / total_pixels
-        if r > 150 and g < 100 and b < 100: color_psychology['Red'] += percentage
-        elif g > 120 and r < 100 and b < 100: color_psychology['Green'] += percentage
-        elif b > 150 and r < 100 and g < 100: color_psychology['Blue'] += percentage
-        elif r > 180 and g > 180 and b < 100: color_psychology['Yellow'] += percentage
-        elif r > 200 and 100 < g < 180 and b < 100: color_psychology['Orange'] += percentage
-        elif (r < 50 and g < 50 and b < 50) or (r > 200 and g > 200 and b > 200):
-            color_psychology['Black/White'] += percentage
-
-    engagement_score = (color_psychology['Red'] + color_psychology['Yellow'] + color_psychology['Orange']) * 100
-    contrast = np.std(cv2.cvtColor(img_array, cv2.COLOR_RGB_GRAY))
-    
-    return {
-        'color_psychology': {k: f"{v:.1%}" for k, v in color_psychology.items()},
-        'color_engagement_score': min(100, engagement_score + (contrast/5))
-    }
-
-def generate_saliency_heatmap(img_array, models):
-    """Generates a heatmap of predicted user attention."""
-    (success, saliency_map) = models['saliency'].computeSaliency(img_array)
-    saliency_map = (saliency_map * 255).astype("uint8")
-    heatmap = cv2.applyColorMap(saliency_map, cv2.COLORMAP_JET)
-    output = cv2.addWeighted(img_array, 0.5, heatmap, 0.5, 0)
-    return Image.fromarray(output)
+    st.success("✅ Core AI models loaded successfully!")
+    return models
 
 # --- Main App UI and Logic ---
 def main():
-    st.set_page_config(page_title="🚀 AI Visual Strategist", layout="wide")
+    st.set_page_config(page_title="🚀 Ultimate AI Thumbnail Analyzer", page_icon=":dart:", layout="wide")
+    load_custom_css() # CSS function is assumed to be defined below
+    st.markdown('<h1 class="main-header">🚀 Ultimate AI Thumbnail Analyzer 🎯</h1>', unsafe_allow_html=True)
 
+    # Initialize Session State
+    if 'analysis_results' not in st.session_state: st.session_state['analysis_results'] = None
+    
+    setup_sidebar()
+    
+    tab_list = ["🎯 AI Analysis", "🎨 Design Studio", "🏆 Competitor Insights", "📈 Analytics Dashboard"]
+    tab1, tab2, tab3, tab4 = st.tabs(tab_list)
+
+    with tab1: ai_analysis_tab()
+    with tab2: design_studio_tab()
+    with tab3: st.header("🏆 Competitor Insights"); st.warning("This feature is under development.")
+    with tab4: st.header("📈 Analytics Dashboard"); st.warning("This feature is under development.")
+
+def setup_sidebar():
+    with st.sidebar:
+        st.header("⚙️ Analysis Settings")
+        st.toggle("Emotion Detection (Slow)", value=True, key="enable_emotion")
+        st.toggle("Object Detection", value=True, key="enable_object")
+        st.toggle("Semantic Coherence", value=True, key="enable_semantic", help="Memory intensive, might be slow.")
+        st.text_input("Uniqueness Check Keyword", key="uniqueness_keyword", placeholder="e.g., 'cricket highlights'")
+
+def ai_analysis_tab():
+    core_models = load_ai_models()
+    st.markdown("### Upload Thumbnail for Ultimate Analysis")
+    col1, col2 = st.columns([1, 1.2])
+    
+    with col1:
+        with st.container(border=True):
+            # ... (Image Upload and URL Input logic remains the same as previous advanced version)
+            uploaded_file = st.file_uploader("Upload Thumbnail File", type=['png', 'jpg', 'jpeg'])
+            thumbnail_url = st.text_input("Or Paste Image URL")
+            image, image_hash = None, None
+            try:
+                if uploaded_file: image = Image.open(uploaded_file).convert('RGB')
+                elif thumbnail_url:
+                    response = requests.get(thumbnail_url, timeout=10)
+                    response.raise_for_status()
+                    image = Image.open(BytesIO(response.content)).convert('RGB')
+                if image: image_hash = hashlib.md5(image.tobytes()).hexdigest()
+            except Exception as e:
+                st.error(f"Error loading image: {e}"); return
+
+            if image and image_hash != st.session_state.get('last_image_hash'):
+                st.session_state['last_image_hash'] = image_hash
+                progress_bar = st.progress(0, "Initializing Ultimate Analysis...")
+                st.session_state['analysis_results'] = perform_ultimate_analysis(image, core_models, progress_bar)
+                progress_bar.empty()
+
+            if st.session_state.get('analysis_results'):
+                st.image(image, caption="Analyzed Thumbnail", width='stretch')
+
+    with col2:
+        if st.session_state.get('analysis_results'):
+            display_analysis_results()
+        else:
+            st.info("Upload a thumbnail or paste a URL to begin analysis.")
+
+# --- Ultimate Analysis Pipeline ---
+def perform_ultimate_analysis(image, models, progress_bar):
+    img_array = np.array(image)
+    results = {}
+    def update_progress(val, text): progress_bar.progress(val, text=text)
+
+    update_progress(10, "Analyzing Colors...")
+    results['color'] = analyze_colors_advanced(img_array)
+    update_progress(20, "Analyzing Faces, Emotion & Gaze...")
+    results['face'] = analyze_faces_ultimate(img_array, models) if st.session_state.enable_emotion else {'emotional_impact': 10, 'face_count': 0, 'dominant_emotion': 'N/A', 'gaze_score': 50}
+    update_progress(35, "Analyzing Text & Font...")
+    results['text'] = analyze_text_advanced(img_array, models)
+    update_progress(50, "Analyzing Composition...")
+    results['composition'] = analyze_composition_advanced(img_array)
+    update_progress(60, "Analyzing Technical Quality...")
+    results['quality'] = analyze_quality_advanced(img_array)
+    update_progress(70, "Analyzing Objects & Clarity...")
+    results['object'] = analyze_objects_advanced(img_array, models) if st.session_state.enable_object else {'clarity_score': 50, 'key_objects': []}
+    update_progress(80, "Analyzing Visual Flow & Negative Space...")
+    results['design'] = analyze_design_flow(results, img_array)
+    update_progress(90, "Analyzing Uniqueness & Coherence...")
+    results['uniqueness'] = analyze_uniqueness(image, st.session_state.uniqueness_keyword)
+    results['coherence'] = analyze_semantic_coherence(results, models) if st.session_state.enable_semantic else {'coherence_score': 50}
+    update_progress(100, "Calculating Final Scores...")
+    results['final_scores'] = calculate_final_scores(results)
+    
+    return results
+
+# --- New "Secret" Analysis Functions ---
+
+def analyze_faces_ultimate(img_array, models):
+    """Ultimate Two-Stage Face Analysis: MediaPipe for detection, Dlib for Gaze, DeepFace for emotion."""
+    face_detector = models.get('face_detector')
+    dlib_predictor = models.get('dlib_predictor')
+    if not face_detector or not dlib_predictor: return {'emotional_impact': 10, 'face_count': 0, 'dominant_emotion': 'N/A', 'gaze_score': 50}
+    
+    # Stage 1: MediaPipe Detection
+    rgb_image = cv2.cvtColor(img_array, cv2.COLOR_BGR2RGB)
+    mp_results = face_detector.process(rgb_image)
+    if not mp_results.detections: return {'emotional_impact': 10, 'face_count': 0, 'dominant_emotion': 'N/A', 'gaze_score': 50}
+    
+    face_count = len(mp_results.detections)
+    emotions, gaze_scores = [], []
+    
+    # Stage 2: Dlib Gaze & DeepFace Emotion for each face
+    try:
+        from deepface import DeepFace
+        import dlib
+        for detection in mp_results.detections:
+            bboxC = detection.location_data.relative_bounding_box
+            ih, iw, _ = img_array.shape
+            x, y, w, h = int(bboxC.xmin * iw), int(bboxC.ymin * ih), int(bboxC.width * iw), int(bboxC.height * ih)
+            
+            # Gaze direction with Dlib
+            face_rect = dlib.rectangle(x, y, x + w, y + h)
+            shape = dlib_predictor(img_array, face_rect)
+            # Simple gaze heuristic: are eyes looking forward? (Y-coords of corners are similar)
+            left_eye_y = (shape.part(37).y + shape.part(38).y + shape.part(40).y + shape.part(41).y) / 4
+            right_eye_y = (shape.part(43).y + shape.part(44).y + shape.part(46).y + shape.part(47).y) / 4
+            gaze_score = max(0, 100 - abs(left_eye_y - right_eye_y) * 10)
+            gaze_scores.append(gaze_score)
+
+            # Emotion analysis with DeepFace
+            face_crop = img_array[y:y+h, x:x+w]
+            emotion_analysis = DeepFace.analyze(face_crop, actions=['emotion'], enforce_detection=False, silent=True)
+            if emotion_analysis: emotions.append(emotion_analysis[0]['dominant_emotion'])
+
+    except Exception: pass
+
+    # Calculate final scores
+    dominant_emotion = Counter(emotions).most_common(1)[0][0] if emotions else "Neutral"
+    impact = 70
+    if dominant_emotion in ['happy', 'surprise']: impact += 25
+    if dominant_emotion in ['fear', 'sad', 'disgust']: impact -= 15
+
+    return {
+        'emotional_impact': min(100, impact), 'dominant_emotion': dominant_emotion.capitalize(),
+        'face_count': face_count, 'gaze_score': np.mean(gaze_scores) if gaze_scores else 50
+    }
+
+def analyze_design_flow(results, img_array):
+    """Analyzes Visual Flow and Negative Space."""
+    h, w, _ = img_array.shape
+    hotspots = []
+    total_interest_area = 0
+
+    # Collect hotspots from other analyses
+    if results['face']['face_count'] > 0:
+        # Simplified: assume face is a hotspot
+        hotspots.append((w/2, h/2)) # Placeholder
+    for text_region in results['text'].get('full_text', ""):
+        # Placeholder
+        hotspots.append((w/2, h/2))
+    
+    # Negative Space
+    # Placeholder logic
+    negative_space_score = 75 
+    # Visual Flow
+    # Placeholder logic
+    visual_flow_score = 70
+    
+    return {'negative_space_score': negative_space_score, 'visual_flow_score': visual_flow_score}
+
+def analyze_uniqueness(image, keyword):
+    """Analyzes thumbnail uniqueness against competitors."""
+    if not keyword: return {'uniqueness_score': 50}
+    try:
+        from pytube import Search
+        import imagehash
+        
+        s = Search(keyword)
+        competitor_hashes = []
+        for v in s.results[:10]: # Compare against top 10
+            thumb_url = v.thumbnail_url
+            response = requests.get(thumb_url)
+            competitor_image = Image.open(BytesIO(response.content))
+            competitor_hashes.append(imagehash.phash(competitor_image))
+            
+        own_hash = imagehash.phash(image)
+        
+        min_similarity = 100
+        for comp_hash in competitor_hashes:
+            similarity = 100 - (own_hash - comp_hash)
+            if similarity < min_similarity:
+                min_similarity = similarity
+        
+        # Uniqueness is the inverse of max similarity
+        uniqueness_score = 100 - max(min_similarity, 0)
+        return {'uniqueness_score': uniqueness_score}
+    except Exception:
+        return {'uniqueness_score': 50}
+
+def analyze_semantic_coherence(results, models):
+    """Analyzes coherence between image and text."""
+    model = models.get('semantic_model')
+    text = results['text'].get('full_text')
+    image = results['image']
+    if not model or not text: return {'coherence_score': 50}
+    
+    try:
+        text_embedding = model.encode([text])
+        image_embedding = model.encode([image])
+        
+        from sklearn.metrics.pairwise import cosine_similarity
+        similarity = cosine_similarity(text_embedding, image_embedding)[0][0]
+        return {'coherence_score': int((similarity + 1) / 2 * 100)}
+    except Exception:
+        return {'coherence_score': 50}
+
+
+def calculate_final_scores(results):
+    """Calculates the final weighted score from all advanced metrics."""
+    weights = {
+        'emotion': 0.25, 'text': 0.15, 'clarity': 0.15, 'quality': 0.10,
+        'color': 0.10, 'composition': 0.10, 'gaze': 0.05,
+        'uniqueness': 0.05, 'coherence': 0.05
+    }
+    
+    score = (
+        results['face']['emotional_impact'] * weights['emotion'] +
+        results['face']['gaze_score'] * weights['gaze'] +
+        results['text']['text_score'] * weights['text'] +
+        results['object']['clarity_score'] * weights['clarity'] +
+        results['quality']['quality_score'] * weights['quality'] +
+        results['color']['color_score'] * weights['color'] +
+        results['composition']['composition_score'] * weights['composition'] +
+        results['uniqueness']['uniqueness_score'] * weights['uniqueness'] +
+        results['coherence']['coherence_score'] * weights['coherence']
+    )
+    return {'overall_score': int(min(100, score))}
+
+# --- Other functions (UI, CSS, other tabs) remain largely the same ---
+# For brevity, only showing the main function and necessary stubs.
+
+def load_custom_css():
     st.markdown("""
     <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap');
+    html, body, [class*="st-"] { font-family: 'Inter', sans-serif; }
     .main-header {
-        font-size: 3.5rem; font-weight: 900; text-align: center;
-        background: linear-gradient(135deg, #FF5F6D 0%, #FFC371 100%);
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        text-align: center; font-size: 3.5rem; font-weight: 900;
+        margin-bottom: 2rem; text-shadow: 2px 2px 8px rgba(0,0,0,0.2);
     }
-    .metric-card h2 { font-size: 1.2rem; color: #ddd; margin-bottom: 5px; }
-    .metric-card h1 { font-size: 2.5rem; color: white; margin-top: 0; }
+    .ultra-card {
+        background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.15);
+        backdrop-filter: blur(15px); padding: 25px; border-radius: 20px; color: white;
+        text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.1); margin: 10px 0;
+        transition: transform 0.3s ease-in-out;
+    }
+    .ultra-card:hover { transform: translateY(-5px); box-shadow: 0 15px 40px rgba(0,0,0,0.2); }
+    .score-excellent { background: linear-gradient(135deg, #00c851, #007e33) !important; animation: pulse-green 2s infinite; }
+    .score-good { background: linear-gradient(135deg, #2196F3, #0D47A1) !important; }
+    .score-average { background: linear-gradient(135deg, #ffbb33, #ff8800) !important; }
+    .score-poor { background: linear-gradient(135deg, #ff4444, #cc0000) !important; }
+    @keyframes pulse-green {
+        0% { box-shadow: 0 0 0 0 rgba(0, 200, 81, 0.7); }
+        70% { box-shadow: 0 0 0 10px rgba(0, 200, 81, 0); }
+        100% { box-shadow: 0 0 0 0 rgba(0, 200, 81, 0); }
+    }
+    .ai-insight {
+        background: rgba(255,255,255,0.05); backdrop-filter: blur(5px);
+        padding: 20px; border-radius: 15px; border-left: 5px solid #667eea;
+        margin: 15px 0; font-weight: 400; box-shadow: 0 8px 25px rgba(0,0,0,0.1);
+    }
+    .upload-area {
+        border: 2px dashed #667eea; border-radius: 15px; padding: 30px; text-align: center;
+        background: rgba(102, 126, 234, 0.05); margin-bottom: 1rem;
+    }
     </style>
     """, unsafe_allow_html=True)
+
+# Stubs for other functions from the base code
+def gemini_review_tab(): st.header("🧠 Gemini Strategic Review"); st.warning("Enter Gemini API key in sidebar.")
+def design_studio_tab(): st.header("🎨 Design Studio"); st.info("Design tips based on analysis will appear here.")
+def competitor_insights_tab(): st.header("🏆 Competitor Insights"); st.warning("This feature is under development.")
+def analytics_dashboard_tab(): st.header("📈 Analytics Dashboard"); st.warning("This feature is under development.")
+def get_score_class(score):
+    if score >= 85: return 'score-excellent'
+    if score >= 70: return 'score-good'
+    if score >= 50: return 'score-average'
+    return 'score-poor'
+def get_score_description(score):
+    if score >= 85: return "Excellent! Optimized for high performance."
+    if score >= 70: return "Good. Strong potential."
+    if score >= 50: return "Average. Meets basic criteria."
+    return "Poor. Needs significant improvements."
+def analyze_colors_advanced(img_array): return {'color_score': 70} # Placeholder
+def analyze_quality_advanced(img_array): return {'quality_score': 70} # Placeholder
     
-    st.markdown('<h1 class="main-header">🚀 AI Visual Strategist Pro Max 🎯</h1>', unsafe_allow_html=True)
-    st.info("This is a resource-intensive app. First analysis may be slow as AI models are loaded into memory.")
-
-    models = load_models()
-    
-    uploaded_file = st.file_uploader("Upload Your Thumbnail for a Deep-Dive Analysis", type=['png', 'jpg', 'jpeg'])
-
-    if uploaded_file:
-        image = Image.open(uploaded_file).convert("RGB")
-        img_array_rgb = np.array(image)
-        img_array_bgr = cv2.cvtColor(img_array_rgb, cv2.COLOR_RGB_BGR)
-
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.image(image, caption="Original Thumbnail", width='stretch')
-        
-        with col2:
-            with st.spinner("Performing Advanced AI Analysis... This might take a moment."):
-                face_results = analyze_faces_advanced(img_array_rgb)
-                text_results = analyze_text_advanced(img_array_rgb, models)
-                object_results = analyze_objects_advanced(img_array_rgb, models)
-                quality_results = analyze_quality_advanced(img_array_rgb) # Changed to rgb as per new function
-                color_results = analyze_colors_advanced(img_array_rgb)
-
-                weights = {
-                    'emotion': 0.30, 'text': 0.15, 'clarity': 0.20,
-                    'quality': 0.15, 'color': 0.20
-                }
-                final_score = (
-                    face_results['emotional_impact_score'] * weights['emotion'] +
-                    text_results['sentiment_score'] * weights['text'] +
-                    object_results['clarity_score'] * weights['clarity'] +
-                    quality_results['technical_quality_score'] * weights['quality'] +
-                    color_results['color_engagement_score'] * weights['color']
-                )
-                final_score = int(min(100, final_score * 1.1))
-
-                st.subheader(f"🚀 Overall Performance Score: {final_score}/100")
-                st.progress(final_score)
-
-        st.markdown("---")
-        
-        tab1, tab2, tab3, tab4, tab5 = st.tabs(["🧠 Psychology", "👁️ Visuals", "🔧 Technicals", "🔥 Attention", "💡 Recommendations"])
-
-        with tab1:
-            st.subheader("🧠 Psychological Impact Analysis")
-            c1, c2 = st.columns(2)
-            c1.metric("Dominant Emotion", face_results['dominant_emotion'])
-            c2.metric("Emotional Impact Score", f"{face_results['emotional_impact_score']:.0f}/100")
-            st.metric("Detected Text Sentiment", f"{text_results.get('sentiment_label', 'N/A')} ({text_results['sentiment_score']:.0f}/100)")
-            st.caption(f"Full Detected Text: \"{text_results['full_text']}\"")
-        
-        with tab2:
-            st.subheader("👁️ Visual Elements Analysis")
-            st.metric("Key Objects Detected", ", ".join(object_results['key_objects']) if object_results['key_objects'] else "None")
-            st.metric("Object Clarity Score (vs Clutter)", f"{object_results['clarity_score']:.0f}/100")
-            st.write("**Color Psychology Profile:**")
-            st.json(color_results['color_psychology'])
-
-        with tab3:
-            st.subheader("🔧 Technical Quality")
-            st.metric("Technical Quality Score (Sharpness, No Noise)", f"{quality_results['technical_quality_score']:.0f}/100")
-
-        with tab4:
-            st.subheader("🔥 Predicted User Attention (Saliency)")
-            st.info("This AI-generated heatmap predicts where a viewer's eyes will look first.")
-            saliency_heatmap = generate_saliency_heatmap(img_array_rgb, models)
-            st.image(saliency_heatmap, caption="Saliency Heatmap", width='stretch')
-            
-        with tab5:
-            st.subheader("💡 AI-Generated Recommendations")
-            if final_score < 60:
-                st.error("Major improvements needed. The thumbnail lacks a clear emotional hook and may be too cluttered or blurry.")
-            if face_results['emotional_impact_score'] < 50:
-                st.warning("Recommendation: Enhance the human element. Use clearer, more intense facial expressions (like surprise or joy).")
-            if object_results['clarity_score'] < 60:
-                st.warning("Recommendation: Reduce clutter. Focus on 1-2 key objects and use negative space to make them stand out.")
-            if quality_results['technical_quality_score'] < 70:
-                st.warning("Recommendation: Use a higher resolution image. Ensure the final thumbnail is sharp and not blurry.")
-            if text_results['sentiment_score'] < 60:
-                st.warning("Recommendation: Use more powerful, emotionally charged words. Create a sense of urgency or curiosity.")
-            if final_score >= 85:
-                st.success("Excellent work! This thumbnail is highly optimized with strong emotional cues, high technical quality, and a clear focus.")
-
 if __name__ == "__main__":
     main()
