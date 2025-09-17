@@ -34,7 +34,7 @@ def load_ai_models():
     try:
         import easyocr
         # Using a broader language set for global reach
-        models['ocr'] = easyocr.Reader(['en', 'ur', 'hi'], gpu=False, verbose=False)
+        models['ocr'] = easyocr.Reader(['en', 'ur'], gpu=False, verbose=False)
     except Exception as e:
         st.error(f"Could not load EasyOCR model. Text analysis will be limited. Error: {e}")
         models['ocr'] = None
